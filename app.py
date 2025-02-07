@@ -1,4 +1,4 @@
-from flask import Flask, Blueprint, render_template_string, render_template, send_file, request, current_app, jsonify, redirect, session
+from flask import Flask, Blueprint, render_template_string, render_template, send_file, request, current_app, jsonify, redirect, session, url_for, send_from_directory
 from utils import allowed_file, is_pdf_size_valid, cleanup_temp_pdfs
 from flask_caching import Cache
 from flask_cors import CORS, cross_origin
@@ -54,6 +54,10 @@ def upload_pdf():
                     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf', dir=custom_temp_dir)
                     file.seek(0)  # Reset file pointer for reading
                     temp_pdf.write(file.read())
+                    # DIP>>>
+                    app.logger.info(f"Uploaded PDF saved to {temp_pdf.name}")
+                    # DIP<<<
+                    file.seek(0)
                     print('Temp file created[/upload-pdf]:', temp_pdf.name)
                     print('File exists[/upload-pdf], Size:', os.path.getsize(temp_pdf.name))
                     print('File contents[/uplaod-pdf] (first 300 bytes):', file.read(300))
@@ -67,6 +71,10 @@ def upload_pdf():
                     print("Full absolute path of temp file:", os.path.abspath(temp_pdf.name))
                     
                     print("pdf_path in upload_pdf route: %s", pdf_path)
+                    # PID:>>>
+                    pdf_url = url_for('get_pdf', filename=os.path.basename(temp_pdf.name), _external=True)
+                    print(f"PDF Path (URL): {pdf_url}")
+                    # PID:<<<
                 except Exception as e:
                     logging.exception("Unexpected error during file handling:", e)
                     os.remove(pdf_path)
@@ -76,12 +84,22 @@ def upload_pdf():
                 os.remove(pdf_path)
                 return jsonify({"error": "Brak części plikowej"}), 400
 
-        return jsonify({"pdf_path": pdf_path})
+        # return jsonify({"pdf_path": pdf_path})
+        return jsonify({
+            'pdf_url': pdf_url,
+            'pdf_path': pdf_path # Send just a filename.
+        })
     except Exception as e:
         os.remove(pdf_path)
         logging.exception("Error during upload:", e)
         return jsonify({"error": "Internal server error"}), 500
         
+# PID:>>>
+@app.route('/static/temporaries/<filename>', methods=['GET'])
+def get_pdf(filename):
+    return send_from_directory(custom_temp_dir, filename)
+# PID:<<<
+
 @pdf_blueprint.route('/upload-pdf', methods=['GET'])
 def redirect_from_get():
     """
@@ -150,11 +168,23 @@ def convert_pdf():
     print(request.files)  # Log the content of the files received
     print(request.data)  # Print raw request data
     print(request.form)  # Print form data
-    file_path = request.form.get('pdf_path')
-    drill_angle = request.form.get('drill_angle')
-    drill_active_height = request.form.get('drill_active_height')
-    drill_movement_speed = request.form.get('drill_movement_speed')
-    print("filepath tu print", file_path)
+    # DIP:>>>
+    # file_path = request.form.get('pdf_path')
+    # drill_angle = request.form.get('drill_angle')
+    # drill_active_height = request.form.get('drill_active_height')
+    # drill_movement_speed = request.form.get('drill_movement_speed')
+     # Parse incoming JSON payload
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No JSON payload received"}), 400
+    
+    # Extract parameters
+    file_path = data.get("pdf_path")  # Relative path from /static/temporaries
+    drill_angle = data.get("drill_angle")
+    drill_active_height = data.get("drill_active_height")
+    drill_movement_speed = data.get("drill_movement_speed")
+    # DIP:<<<
+    print("filepath to print", file_path)
     if not file_path:
         return jsonify({"error": "File path not received in request"}), 400
     if not os.path.exists(file_path):
@@ -191,17 +221,41 @@ def convert_pdf():
             if fontfilename.endswith('.svg'):
                 os.remove(fontfilename)
 
+@pdf_blueprint.route('/fetch-pdf-url', methods=['POST'])
+def fetch_pdf_url():
+    """Fetch a PDF file from an external HTTP URL and save it temporarily."""
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        if not url or not url.endswith('.pdf'):
+            return jsonify({"error": "Invalid PDF URL"}), 400
+        
+        response = request.get(url, stream=True)
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to fetch PDF"}), 400
+        
+        temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf', dir=custom_temp_dir)
+        for chunk in response.iter_content(chunk_size=1024):
+            temp_pdf.write(chunk)
+        temp_pdf.close()
+        
+        app.logger.info(f"PDF fetched from {url} saved to {temp_pdf.name}")
+        return jsonify({"pdf_path": temp_pdf.name})
+    except Exception as e:
+        logging.exception("Error fetching PDF from URL")
+        return jsonify({"error": str(e)}), 500
+
 
 cache = Cache(app)
 app.config['CACHE_TYPE'] = 'simple'
-app.config['CACHE_DEFAULT_TIMEOUT'] = 3600
+app.config['CACHE_DEFAULT_TIMEOUT'] = 1200
 app.config['CORS_HEADERS'] = 'Content-Type'
 app.register_blueprint(pdf_blueprint, url_prefix='/pdf')
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(cleanup_temp_pdfs, 'interval', minutes=30)
+scheduler.add_job(cleanup_temp_pdfs, 'interval', minutes=4)
 scheduler.start()
 
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(host='0.0.0.0', port=5000, debug=True) 

@@ -31,7 +31,8 @@ RUN npm install
 WORKDIR /app
 
 # Make port 5000 available to the world outside this container | $PORT
-EXPOSE $PORT
+ENV PORT 5000
+EXPOSE 5000
 
 # Define environment variable
 ENV FLASK_APP app.py
@@ -41,4 +42,4 @@ ENV FLASK_RUN_HOST 0.0.0.0
 # CMD ["flask", "run"]
 
 # gunciorn port bind + run
-CMD gunicorn --workers=4 --bind 0.0.0.0:$PORT app:app
+CMD ["gunicorn", "--workers=4", "--bind", "0.0.0.0:5000", "app:app"]

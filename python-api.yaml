@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment  # Deployment- jako typ zasobu, do zarządzania wdrożeniami w aplikacji.
+metadata:
+  name: python-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-api # wskaźnik na aplikację, której dotyczy deployment
+  template:
+    metadata:
+      labels:
+        app: python-api
+    spec:
+      containers:
+      - name: python-api  # nazwa kontenera
+        image: python-api:latest  # obraz kontenera, który ma zostać uruchomiony.
+        ports:
+        - containerPort: 5000 # port aplikacji wewnątrz kontenera
+        imagePullPolicy: Never  # kubernetes nie zwróci się do zewnętrznego repozytorium o pobranie obrazu.
+---
+apiVersion: v1
+kind: Service # typ zasobu Service- umożliwia komunikację z aplikacją
+metadata:
+  name: python-api-service
+spec:
+  selector:
+    app: python-api
+  ports:
+    - protocol: TCP # protokół komunikacji
+      port: 5000
+      targetPort: 5000
+  type: ClusterIP # dla typu service - działanie to udostępnia aplikację wewnątrz klastra.
